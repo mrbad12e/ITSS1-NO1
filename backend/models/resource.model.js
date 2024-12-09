@@ -3,7 +3,11 @@ const mongoose = require("mongoose");
 const resourceSchema = new mongoose.Schema({
   title: { type: String, required: true },
   file_url: { type: String, required: true },
-  tags: [String], // Lưu trữ các tag tìm kiếm
+  tags: [String],
+  forum_id: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Forum",
+  },
   uploaded_by: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",

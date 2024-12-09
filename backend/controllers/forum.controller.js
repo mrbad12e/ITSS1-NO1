@@ -1,62 +1,68 @@
-const forumService = require("../services/forum.service");
+const forumModel = require("../models/forum.model");
 
-/**
- * Controller to create a new forum post
- */
-const createPost = async (req, res) => {
+const createForum = async (req, res) => {
   try {
-    const { title, content, author_id } = req.body;
-    if (!title || !content || !author_id) {
-      return res
-        .status(400)
-        .json({ error: "Title, content, and author_id are required" });
+    const { name, userId, description } = req.body;
+    if (!name || !userId) {
+      return res.status(400).json({ error: "Missing information" });
     }
 
-    const newPost = await forumService.createPost({
-      title,
-      content,
-      author_id,
+    const newPost = await forumModel.create({
+      name,
+      created_by: userId,
+      description,
+      members: [userId],
     });
     res.status(201).json(newPost);
   } catch (err) {
     res
       .status(500)
-      .json({ error: "Failed to create post", details: err.message });
+      .json({ error: "Failed to create forum", details: err.message });
   }
 };
 
-/**
- * Controller to get all forum posts
- */
-const getAllPosts = async (req, res) => {
+const getForumsByUser = async (req, res) => {
   try {
-    const posts = await forumService.getAllPosts();
-    res.status(200).json(posts);
+    const { userId } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+    const forums = await forumModel.find({ members: userId });
+
+    res.status(200).json(forums);
   } catch (err) {
     res
       .status(500)
-      .json({ error: "Failed to fetch posts", details: err.message });
+      .json({ error: "Failed to fetch forums", details: err.message });
   }
 };
 
-/**
- * Controller to get a forum post by ID
- */
-const getPostById = async (req, res) => {
+const joinForum = async (req, res) => {
   try {
-    const { id } = req.params;
-    const post = await forumService.getPostById(id);
+    const { userId, forumId } = req.body;
 
-    if (!post) {
-      return res.status(404).json({ error: "Post not found" });
+    if (!userId || !forumId) {
+      return res.status(400).json({ error: "Missing userId or forumId" });
     }
 
-    res.status(200).json(post);
+    const forum = await Forum.findOneAndUpdate(
+      { _id: forumId },
+      { $addToSet: { members: userId } },
+      { new: true }
+    );
+
+    if (!forum) {
+      return res.status(404).json({ error: "No forum found!" });
+    }
+
+    res.status(200).json({ message: "Joined forum successfully", forum });
   } catch (err) {
+    console.error(err);
     res
       .status(500)
-      .json({ error: "Failed to fetch post", details: err.message });
+      .json({ error: "Failed to join forum", details: err.message });
   }
 };
 
-module.exports = { createPost, getAllPosts, getPostById };
+module.exports = { createForum, getForumsByUser, joinForum };

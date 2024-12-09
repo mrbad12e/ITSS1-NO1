@@ -1,13 +1,15 @@
 const mongoose = require("mongoose");
+const { forumType } = require("../utils/constant");
 
 const forumSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  content: { type: String, required: true },
-  author_id: {
+  name: { type: String, required: true },
+  description: { type: String },
+  created_by: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
     required: true,
   },
+  members: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
   created_at: { type: Date, default: Date.now },
 });
 

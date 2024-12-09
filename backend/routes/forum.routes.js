@@ -3,13 +3,10 @@ const forumController = require("../controllers/forum.controller");
 
 const router = express.Router();
 
-// Route to create a new forum post
-router.post("/", forumController.createPost);
+router.post("/", forumController.createForum);
 
-// Route to get all forum posts
-router.get("/", forumController.getAllPosts);
+router.post("/my-forums", forumController.getForumsByUser);
 
-// Route to get a specific forum post by ID
-router.get("/:id", forumController.getPostById);
+router.post("/join-forum", forumController.joinForum);
 
 module.exports = router;
