@@ -1,5 +1,4 @@
 const mongoose = require("mongoose");
-const { forumType } = require("../utils/constant");
 
 const forumSchema = new mongoose.Schema({
   name: { type: String, required: true },

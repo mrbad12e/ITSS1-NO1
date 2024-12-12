@@ -9,4 +9,6 @@ router.post("/my-forums", forumController.getForumsByUser);
 
 router.post("/join-forum", forumController.joinForum);
 
+router.post("/this-forum", forumController.getForumById);
+
 module.exports = router;

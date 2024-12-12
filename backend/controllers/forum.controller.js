@@ -65,4 +65,21 @@ const joinForum = async (req, res) => {
   }
 };
 
-module.exports = { createForum, getForumsByUser, joinForum };
+const getForumById = async (req, res) => {
+  try {
+    const { forumId } = req.body;
+    if (!forumId) {
+      return res.status(400).json({ error: "Missing info" });
+    }
+    const forum = await forumModel.findById(forumId);
+    if (!forum) {
+      return res.status(404).json({ error: "Can not find forum" });
+    }
+    return res.status(200).json(forum);
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+module.exports = { createForum, getForumsByUser, joinForum, getForumById };

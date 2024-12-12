@@ -1,6 +1,7 @@
 const express = require("express");
 const forumRoutes = require("../routes/forum.routes");
 const commentRoutes = require("../routes/comment.routes");
+const postRoutes = require("../routes/post.routes");
 const router = express.Router();
 
 const defaultRoutes = [
@@ -11,6 +12,10 @@ const defaultRoutes = [
   {
     path: "/comment",
     route: commentRoutes,
+  },
+  {
+    path: "/post",
+    route: postRoutes,
   },
 ];
 
