@@ -1,5 +1,6 @@
 const { default: mongoose } = require("mongoose");
 const postModel = require("../models/post.model");
+const moment = require("moment-timezone");
 const userModel = require("../models/user.model");
 
 const createPost = async (req, res) => {
@@ -22,19 +23,21 @@ const getPostsByForumId = async (req, res) => {
   if (!forumId) {
     return res.status(400).json({ error: "Forum ID is required" });
   }
-  console.log(new mongoose.Types.ObjectId(forumId));
+
   try {
     const posts = await postModel
       .find({ forum_id: new mongoose.Types.ObjectId(forumId) })
       .populate("created_by", "name")
       .sort({ createdAt: -1 });
-    console.log(posts);
+
     const formattedPosts = posts.map((post) => ({
       title: post.title,
       content: post.content,
       senderName: post.created_by.name,
-      createdAt: post.createdAt
-        ? new Date(post.createdAt).toISOString().replace("T", " ").slice(0, 16)
+      createdAt: post.created_at
+        ? moment(post.created_at)
+            .tz("Asia/Ho_Chi_Minh")
+            .format("YYYY/MM/DD HH:mm")
         : "Unknown date",
     }));
 
