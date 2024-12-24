@@ -1,26 +1,24 @@
-const express = require("express");
-const forumRoutes = require("../routes/forum.routes");
-const commentRoutes = require("../routes/comment.routes");
-const postRoutes = require("../routes/post.routes");
+// routes/index.js
+
+import express from 'express';
+import forumRoutes from '../routes/forum.routes';
+import commentRoutes from '../routes/comment.routes';
+import postRoutes from '../routes/post.routes';
+import userRoutes from '../routes/user.routes';
+import messageRoutes from '../routes/message.routes';
+import meetingRoutes from '../routes/meeting.routes';
+import verifyToken from '../middleware/auth/verifyToken';
+import { sanitizers } from '../middleware/validators/sanitizers';
 const router = express.Router();
 
-const defaultRoutes = [
-  {
-    path: "/forum",
-    route: forumRoutes,
-  },
-  {
-    path: "/comment",
-    route: commentRoutes,
-  },
-  {
-    path: "/post",
-    route: postRoutes,
-  },
-];
+// Apply sanitization to all routes
+router.use(sanitizers.sanitizeBody);
 
-defaultRoutes.forEach((route) => {
-  router.use(route.path, route.route);
-});
+router.use('/user', userRoutes);
+router.use('/forums', verifyToken, forumRoutes);
+router.use('/comment', verifyToken, commentRoutes);
+router.use('/post', verifyToken, postRoutes);
+router.use('/message', verifyToken, messageRoutes);
+router.use('/meeting', verifyToken, meetingRoutes);
 
-module.exports = router;
+export default router;

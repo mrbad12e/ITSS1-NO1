@@ -1,10 +1,33 @@
-const express = require("express");
-const postController = require("../controllers/post.controller");
+import express from 'express';
+import PostController from '../controllers/post.controller.js';
+import { uploadMiddleware } from '../middleware/upload/fileUpload.js';
+import { postValidation } from '../middleware/validators/forumValidator.js';
 
 const router = express.Router();
 
-router.post("/create", postController.createPost);
+// Create post with files
+router.post('/',
+    uploadMiddleware.multiple, // This will now properly handle multipart/form-data
+    uploadMiddleware.handleMultiple,
+    postValidation.createPostValidation,
+    PostController.createPost
+);
 
-router.post("/forum-post", postController.getPostsByForumId);
+// Get post by id
+router.get('/:postId', PostController.getPost);
 
-module.exports = router;
+// Update post
+router.put('/:postId',
+    uploadMiddleware.multiple,
+    uploadMiddleware.handleMultiple,
+    postValidation.updatePostValidation,
+    PostController.updatePost
+);
+
+// Delete post
+router.delete('/:postId', PostController.deletePost);
+
+// Get all posts in a forum
+router.get('/forum/:forumId', PostController.getForumPosts);
+
+export default router;

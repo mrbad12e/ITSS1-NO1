@@ -1,12 +1,19 @@
-const express = require("express");
-const commentController = require("../controllers/comment.controller");
+import express from 'express';
+import CommentController from '../controllers/comment.controller';
+import { commentValidation } from '../middleware/validators/forumValidator';
 
 const router = express.Router();
 
-// Route to create a new comment
-router.post("/", commentController.createComment);
+// Create a comment
+router.post('/', commentValidation, CommentController.createComment);
 
-// Route to get all comments for a specific forum post
-router.get("/:forumId", commentController.getCommentsByForumId);
+// Update a comment
+router.put('/:commentId', commentValidation, CommentController.updateComment);
 
-module.exports = router;
+// Delete a comment
+router.delete('/:commentId', CommentController.deleteComment);
+
+// Get all comments for a post
+router.get('/post/:postId', CommentController.getPostComments);
+
+export default router;

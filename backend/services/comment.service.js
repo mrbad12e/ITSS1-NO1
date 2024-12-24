@@ -1,24 +1,75 @@
-const Comment = require("../models/comment.model");
+import Comment from '../models/comment.model';
+import Post from '../models/post.model';
+import Forum from '../models/forum.model';
 
-/**
- * Create a new comment
- * @param {Object} commentData - Data for the comment
- * @returns {Promise<Object>} - The created comment
- */
-const createComment = async (commentData) => {
-  const newComment = new Comment(commentData);
-  return await newComment.save();
+const commentService = {
+    async createComment(userId, commentData) {
+        // Verify post exists and user has access
+        const post = await Post.findById(commentData.post_id);
+        if (!post || post.is_deleted) {
+            throw new Error('Post not found');
+        }
+
+        // Check if user is member of the forum
+        const forum = await Forum.findById(post.forum_id);
+        if (!forum || !forum.members.includes(userId)) {
+            throw new Error('Access denied');
+        }
+
+        const comment = new Comment({
+            post_id: commentData.post_id,
+            author_id: userId,
+            content: commentData.content
+        });
+
+        return await comment.save();
+    },
+
+    async updateComment(commentId, userId, updateData) {
+        const comment = await Comment.findOne({
+            _id: commentId,
+            author_id: userId
+        });
+
+        if (!comment) {
+            throw new Error('Comment not found or unauthorized');
+        }
+
+        comment.content = updateData.content;
+        return await comment.save();
+    },
+
+    async deleteComment(commentId, userId) {
+        const comment = await Comment.findOne({
+            _id: commentId,
+            author_id: userId
+        });
+
+        if (!comment) {
+            throw new Error('Comment not found or unauthorized');
+        }
+
+        await comment.deleteOne();
+        return { message: 'Comment deleted successfully' };
+    },
+
+    async getPostComments(postId, userId) {
+        // Verify post exists and user has access
+        const post = await Post.findById(postId);
+        if (!post || post.is_deleted) {
+            throw new Error('Post not found');
+        }
+
+        // Check if user is member of the forum
+        const forum = await Forum.findById(post.forum_id);
+        if (!forum || !forum.members.includes(userId)) {
+            throw new Error('Access denied');
+        }
+
+        return await Comment.find({ post_id: postId })
+            .populate('author_id', 'name email profile_image')
+            .sort({ created_at: -1 });
+    }
 };
 
-/**
- * Get all comments for a specific forum post
- * @param {String} forumId - The ID of the forum post
- * @returns {Promise<Array>} - List of comments
- */
-const getCommentsByForumId = async (forumId) => {
-  return await Comment.find({ forum_id: forumId })
-    .populate("author_id", "name email")
-    .sort({ created_at: 1 });
-};
-
-module.exports = { createComment, getCommentsByForumId };
+export default commentService;
