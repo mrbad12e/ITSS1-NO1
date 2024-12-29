@@ -6,6 +6,10 @@ import { uploadMiddleware } from '../middleware/upload/fileUpload';
 const router = express.Router();
 
 router.post('/login', loginValidation, UserController.login);
+router.get('/validate-session', verifyToken, UserController.validateSession);
+router.get('/socket', verifyToken, UserController.getSocketToken);
+router.post('/logout', UserController.logout);
+router.get('/profile/:userId', verifyToken, UserController.getUserProfile);
 router.put('/profile',
     verifyToken,
     uploadMiddleware.single,

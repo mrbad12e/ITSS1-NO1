@@ -19,5 +19,6 @@ router.get('/event/:eventId', ForumController.getEvent);
 router.put('/event/:eventId', eventValidation, ForumController.updateEvent);
 router.delete('/event/:eventId', ForumController.deleteEvent);
 router.post('/event/:eventId/participate', ForumController.updateEventParticipation);
+router.delete('/:forumId/leave', ForumController.leaveForum);
 
 export default router;

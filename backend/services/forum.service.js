@@ -22,7 +22,7 @@ const forumService = {
             throw new Error('Forum not found');
         }
 
-        if (!forum.members.some(member => member._id.toString() === userId)) {
+        if (!forum.members.some((member) => member._id.toString() === userId)) {
             throw new Error('Access denied');
         }
 
@@ -37,66 +37,62 @@ const forumService = {
 
         const allowedUpdates = ['name', 'description', 'settings'];
         const updates = {};
-        Object.keys(updateData).forEach(key => {
+        Object.keys(updateData).forEach((key) => {
             if (allowedUpdates.includes(key)) {
                 updates[key] = updateData[key];
             }
         });
 
-        return await Forum.findByIdAndUpdate(
-            forumId,
-            { $set: updates },
-            { new: true }
-        ).populate('created_by', 'name email');
+        return await Forum.findByIdAndUpdate(forumId, { $set: updates }, { new: true }).populate(
+            'created_by',
+            'name email'
+        );
     },
 
     async deleteForum(forumId, userId) {
-        const session = await mongoose.startSession();
-        session.startTransaction();
+        // First verify forum exists and user is authorized
+        const forum = await Forum.findOne({ _id: forumId, created_by: userId });
+        if (!forum) {
+            throw new Error('Forum not found or unauthorized');
+        }
 
         try {
-            const forum = await Forum.findOne({ _id: forumId, created_by: userId });
-            if (!forum) {
-                throw new Error('Forum not found or unauthorized');
-            }
-
-            // Archive forum instead of deleting
-            await Forum.findByIdAndUpdate(
-                forumId,
-                { status: 'archived' },
-                { session }
-            );
+            // Archive forum
+            await Forum.findByIdAndUpdate(forumId, { status: 'archived' });
 
             // Archive associated posts
-            await Post.updateMany(
-                { forum_id: forumId },
-                { is_deleted: true },
-                { session }
-            );
+            await Post.updateMany({ forum_id: forumId }, { is_deleted: true });
 
-            await session.commitTransaction();
             return { message: 'Forum archived successfully' };
         } catch (error) {
-            await session.abortTransaction();
-            throw error;
-        } finally {
-            session.endSession();
+            // If any operation fails, throw the error
+            throw new Error('Failed to archive forum: ' + error.message);
         }
     },
 
     async getForumMembers(forumId, userId) {
-        const forum = await Forum.findById(forumId)
-            .populate('members', 'name email profile_image specialization');
+        const forum = await Forum.findById(forumId).populate('members', 'name email profile_image specialization');
 
         if (!forum) {
             throw new Error('Forum not found');
         }
 
-        if (!forum.members.some(member => member._id.toString() === userId)) {
+        if (!forum.members.some((member) => member._id.toString() === userId)) {
             throw new Error('Access denied');
         }
 
-        return forum.members;
+        // Transform members to include role and ownership information
+        const membersWithRoles = forum.members.map((member) => ({
+            ...member.toObject(),
+            is_owner: forum.created_by.toString() === member._id.toString(),
+            role: forum.created_by.toString() === member._id.toString() ? 'owner' : 'member',
+        }));
+
+        // Add a field to indicate if the caller is the owner
+        return {
+            members: membersWithRoles,
+            is_caller_owner: forum.created_by.toString() === userId,
+        };
     },
 
     async getForumResources(forumId, userId) {
@@ -109,7 +105,18 @@ const forumService = {
             throw new Error('Access denied');
         }
 
-        return await Resource.find({ forum_id: forumId })
+        return await Resource.find({
+            forum_id: forumId,
+            related_type: 'post',
+            related_id: {
+                $in: (
+                    await Post.find({
+                        forum_id: forumId,
+                        is_deleted: false,
+                    }).select('_id')
+                ).map((post) => post._id),
+            },
+        })
             .populate('uploaded_by', 'name email')
             .sort({ created_at: -1 });
     },
@@ -128,12 +135,31 @@ const forumService = {
             throw new Error('Cannot remove forum owner');
         }
 
-        return await Forum.findByIdAndUpdate(
-            forumId,
-            { $pull: { members: memberId } },
-            { new: true }
+        return await Forum.findByIdAndUpdate(forumId, { $pull: { members: memberId } }, { new: true });
+    },
+
+    async leaveForum(forumId, userId) {
+        const forum = await Forum.findById(forumId);
+        if (!forum) {
+            throw new Error('Forum not found');
+        }
+
+        // Check if user is actually a member
+        if (!forum.members.includes(userId)) {
+            throw new Error('User is not a member of this forum');
+        }
+
+        // Prevent owner from leaving
+        if (forum.created_by.toString() === userId) {
+            throw new Error('Forum owner cannot leave the forum');
+        }
+
+        // Remove user from forum members
+        return await Forum.findByIdAndUpdate(forumId, { $pull: { members: userId } }, { new: true }).populate(
+            'created_by',
+            'name email'
         );
-    }
-}
+    },
+};
 
 export default forumService;

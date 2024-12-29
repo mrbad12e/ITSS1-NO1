@@ -3,20 +3,53 @@ import { validationResult } from 'express-validator';
 
 const UserController = {
     async login(req, res) {
-        try {
+        try {            
             const { email, password } = req.body;
             const { token, user } = await userService.login(email, password);
             
             res.cookie('token', token, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === 'production',
-                sameSite: 'lax',
-                maxAge: 24 * 60 * 60 * 1000
+                secure: true,
+                sameSite: 'none',
+                maxAge: 24 * 60 * 60 * 1000,
+                path: '/'
             });
 
             res.status(200).json({ user });
         } catch (error) {
             res.status(400).json({ message: error.message });
+        }
+    },
+
+    async logout(req, res) {
+        res.clearCookie('token');
+        res.status(200).json({ message: 'Logged out' });
+    },
+
+    async getSocketToken(req, res) {
+        try {
+            const token = await userService.getSocketToken(req.user.userId);
+            res.status(200).json({ token });
+        } catch (error) {
+            res.status(400).json({ message: error.message });
+        }
+    },
+
+    async validateSession(req, res) {
+        try {            
+            const user = await userService.validateSession(req.user.userId);
+            res.status(200).json({ user });
+        } catch (error) {
+            res.status(401).json({ message: error.message });
+        }
+    },
+
+    async getUserProfile(req, res) {
+        try {
+            const user = await userService.getUserProfile(req.params.userId);
+            res.status(200).json(user);
+        } catch (error) {
+            res.status(404).json({ message: error.message });
         }
     },
 

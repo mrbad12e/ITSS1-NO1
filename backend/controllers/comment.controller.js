@@ -18,11 +18,6 @@ const CommentController = {
 
     async updateComment(req, res) {
         try {
-            const errors = validationResult(req);
-            if (!errors.isEmpty()) {
-                return res.status(400).json({ errors: errors.array() });
-            }
-
             const comment = await commentService.updateComment(
                 req.params.commentId,
                 req.user.userId,

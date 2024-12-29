@@ -59,6 +59,16 @@ const MessageController = {
         } catch (error) {
             res.status(404).json({ message: error.message });
         }
+    },
+
+    async searchChats(req, res) {
+        try {
+            const results = await messageService.searchChats(req.user.userId, req.query.query);
+            
+            res.status(200).json(results);
+        } catch (error) {
+            res.status(400).json({ message: error.message });
+        }
     }
 };
 

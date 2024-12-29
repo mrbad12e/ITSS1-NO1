@@ -1,39 +1,34 @@
 // services/socket.service.js
+/* This is the backend service that handles socket connections and messaging between users. 
+It uses the Socket.IO library to create a WebSocket server that allows real-time communication between clients. 
+The service also handles video calls by creating rooms for participants to join and exchange signals.
+DO NOT MODIFY THIS FILE
+*/
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import Message from '../models/message.model';
 import Meeting from '../models/meeting.model';
-import mediasoup from 'mediasoup';
+import { RtcTokenBuilder, RtcRole } from 'agora-access-token';
 
 class SocketService {
     constructor(server) {
         this.io = new Server(server, {
             cors: {
                 origin: true,
-                credentials: true
+                methods: ["GET", "POST"],
+                credentials: true,
+                transports: ['websocket', 'polling']
             }
         });
         
-        this.workers = [];
-        this.rooms = new Map(); // room_id -> { router, peers }
-        this.peers = new Map(); // socket.id -> { socket, user, transports, producers, consumers }
+        this.rooms = new Map(); // room_id -> { peers }
         this.userSocketMap = new Map(); // userId -> socket.id
+        this.activeChannels = new Map(); // channelName -> { users, startTime }
 
         this.init();
     }
 
-    async init() {
-        // Initialize mediasoup workers (one per CPU core)
-        const numWorkers = Object.keys(require('os').cpus()).length;
-        for (let i = 0; i < numWorkers; i++) {
-            const worker = await mediasoup.createWorker({
-                logLevel: 'warn',
-                rtcMinPort: 10000 + (i * 100),
-                rtcMaxPort: 10099 + (i * 100),
-            });
-            this.workers.push(worker);
-        }
-
+    init() {
         // Set up authentication middleware
         this.io.use(async (socket, next) => {
             try {
@@ -55,32 +50,146 @@ class SocketService {
 
     setupEventHandlers() {
         this.io.on('connection', (socket) => {
-            console.log(`User connected: ${socket.user.id}`);
+            console.log('Socket connected:', socket.id);
             
             // Store socket reference for user
             this.userSocketMap.set(socket.user.id, socket.id);
+            console.log('User socket mapped:', socket.user.id, '->', socket.id);
 
-            // Initialize peer data structure
-            this.peers.set(socket.id, {
-                socket,
-                user: socket.user,
-                transports: new Map(),
-                producers: new Map(),
-                consumers: new Map()
+            // Handle video call events
+            socket.on('requestVideoCall', async (data) => {
+                console.log('Video call requested:', data);
+                try {
+                    const { receiverId } = data;
+                    const channelName = this.generateChannelName(socket.user.id, receiverId);
+                    console.log('Generated channel name:', channelName);
+                    
+                    // Generate token
+                    const token = this.generateAgoraToken(channelName, socket.user.id);
+                    console.log('Generated token for caller');
+
+                    // Store channel information
+                    this.activeChannels.set(channelName, {
+                        users: [socket.user.id, receiverId],
+                        startTime: Date.now()
+                    });
+                    console.log('Channel info stored');
+
+                    // Notify the receiver
+                    const receiverSocketId = this.userSocketMap.get(receiverId);
+                    console.log('Receiver socket ID:', receiverSocketId);
+                    
+                    if (receiverSocketId) {
+                        console.log('Emitting incomingCall to receiver');
+                        this.io.to(receiverSocketId).emit('incomingCall', {
+                            callerId: socket.user.id,
+                            channelName,
+                            token
+                        });
+                    } else {
+                        console.log('Receiver not found or offline');
+                        socket.emit('callError', { 
+                            error: 'Receiver is offline' 
+                        });
+                        return;
+                    }
+
+                    // Send token to caller
+                    console.log('Emitting token to caller');
+                    socket.emit('callTokenGenerated', {
+                        channelName,
+                        token
+                    });
+
+                } catch (error) {
+                    console.error('Error in requestVideoCall:', error);
+                    socket.emit('callError', { error: error.message });
+                }
             });
 
-            // Handle messaging
+            // Test event handler
+            socket.on('test', (data) => {
+                console.log('Test event received:', data);
+                socket.emit('testResponse', { received: true });
+            });
+
+            socket.on('acceptVideoCall', async (data) => {
+                try {
+                    const { channelName, callerId } = data;
+                    const token = this.generateAgoraToken(channelName, socket.user.id);
+
+                    // Notify the caller
+                    const callerSocketId = this.userSocketMap.get(callerId);
+                    if (callerSocketId) {
+                        this.io.to(callerSocketId).emit('callAccepted', {
+                            channelName,
+                            accepterId: socket.user.id
+                        });
+                    }
+
+                    // Send token to accepter
+                    socket.emit('callTokenGenerated', {
+                        channelName,
+                        token
+                    });
+
+                } catch (error) {
+                    socket.emit('callError', { error: error.message });
+                }
+            });
+
+            socket.on('endVideoCall', (data) => {
+                const { channelName } = data;
+                const channel = this.activeChannels.get(channelName);
+                
+                if (channel) {
+                    // Notify all users in the channel
+                    channel.users.forEach(userId => {
+                        const userSocketId = this.userSocketMap.get(userId);
+                        if (userSocketId) {
+                            this.io.to(userSocketId).emit('callEnded', { channelName });
+                        }
+                    });
+
+                    // Clean up channel
+                    this.activeChannels.delete(channelName);
+                }
+            });
+
+            // Handle messaging (your existing message handling code)
             this.setupMessageHandlers(socket);
-            
-            // Handle video calls
-            this.setupVideoCallHandlers(socket);
 
             // Handle disconnection
             socket.on('disconnect', () => {
-                console.log(`User disconnected: ${socket.user.id}`);
                 this.handleDisconnect(socket);
             });
         });
+    }
+
+    generateChannelName(userId1, userId2) {
+        // Create a consistent channel name regardless of user order
+        return [userId1, userId2].sort().join('_');
+    }
+
+    generateAgoraToken(channelName, uid) {
+        const appID = process.env.AGORA_APP_ID;
+        const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+        const role = RtcRole.PUBLISHER;
+        
+        const expirationTimeInSeconds = 3600; // 1 hour
+        const currentTimestamp = Math.floor(Date.now() / 1000);
+        const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
+        
+        const token = RtcTokenBuilder.buildTokenWithUid(
+            appID,
+            appCertificate,
+            channelName,
+            uid,
+            role,
+            privilegeExpiredTs
+        );
+
+        return token;
     }
 
     setupMessageHandlers(socket) {
@@ -91,27 +200,49 @@ class SocketService {
                     sender_id: socket.user.id,
                     receiver_id: data.receiver_id,
                     content: data.content,
-                    chat_id: [socket.user.id, data.receiver_id].sort().join('_')
+                    chat_id: [socket.user.id, data.receiver_id].sort().join('_'),
+                    sent_at: new Date(),
+                    is_read: false
                 });
-
+        
                 await message.save();
-
+                
+                // Populate sender details
+                await message.populate('sender_id', 'name email profile_image specialization');
+                
+                const messageData = {
+                    message: {
+                        _id: message._id,
+                        content: message.content,
+                        sender_id: message.sender_id._id, // Just send the ID
+                        receiver_id: message.receiver_id,
+                        chat_id: message.chat_id,
+                        sent_at: message.sent_at,
+                        is_read: message.is_read
+                    },
+                    sender: {
+                        _id: message.sender_id._id,
+                        name: message.sender_id.name,
+                        email: message.sender_id.email,
+                        profile_image: message.sender_id.profile_image,
+                        specialization: message.sender_id.specialization
+                    }
+                };
+        
                 // Send to receiver if online
                 const receiverSocketId = this.userSocketMap.get(data.receiver_id);
                 if (receiverSocketId) {
-                    this.io.to(receiverSocketId).emit('newMessage', {
-                        message,
-                        sender: socket.user
-                    });
+                    this.io.to(receiverSocketId).emit('newMessage', messageData);
                 }
-
-                // Confirm to sender
-                socket.emit('messageSent', { message });
+        
+                // Send confirmation back to sender
+                socket.emit('messageSent', messageData);
+        
             } catch (error) {
                 socket.emit('messageError', { error: error.message });
             }
         });
-
+    
         // Mark messages as read
         socket.on('markMessagesRead', async (data) => {
             try {
@@ -124,8 +255,8 @@ class SocketService {
                     },
                     { is_read: true }
                 );
-
-                // Notify the sender that messages were read
+    
+                // Notify the sender that their messages were read
                 const senderSocketId = this.userSocketMap.get(data.sender_id);
                 if (senderSocketId) {
                     this.io.to(senderSocketId).emit('messagesRead', {
@@ -140,234 +271,152 @@ class SocketService {
     }
 
     setupVideoCallHandlers(socket) {
-        socket.on('joinRoom', async (data, callback) => {
+        // Handle call initiation
+        socket.on('startCall', async (data) => {
             try {
-                const meeting = await Meeting.findOne({
-                    _id: data.meeting_id,
-                    status: 'active',
-                    participants: socket.user.id
-                });
-
-                if (!meeting) {
-                    throw new Error('Meeting not found or not authorized');
+                const { receiverId } = data;
+                const callId = `${socket.user.id}_${receiverId}_${Date.now()}`;
+                
+                // Check if receiver is already in a call
+                if (this.userCallMap.has(receiverId)) {
+                    throw new Error('User is already in a call');
                 }
 
-                // Create room if it doesn't exist
-                if (!this.rooms.has(meeting.room_id)) {
-                    const router = await this.createRouter();
-                    this.rooms.set(meeting.room_id, {
-                        router,
-                        peers: new Set()
+                // Create new call entry
+                this.calls.set(callId, {
+                    caller: socket.user.id,
+                    receiver: receiverId,
+                    status: 'ringing',
+                    startTime: Date.now()
+                });
+
+                // Map users to call
+                this.userCallMap.set(socket.user.id, callId);
+                this.userCallMap.set(receiverId, callId);
+
+                // Notify receiver
+                const receiverSocketId = this.userSocketMap.get(receiverId);
+                if (receiverSocketId) {
+                    this.io.to(receiverSocketId).emit('incomingCall', {
+                        callId,
+                        caller: socket.user
+                    });
+                } else {
+                    throw new Error('Receiver is offline');
+                }
+
+                socket.emit('callStarted', { callId });
+
+            } catch (error) {
+                socket.emit('callError', { error: error.message });
+            }
+        });
+
+        // Handle call acceptance
+        socket.on('acceptCall', async (data) => {
+            try {
+                const { callId } = data;
+                const call = this.calls.get(callId);
+
+                if (!call || call.status !== 'ringing') {
+                    throw new Error('Invalid call or call status');
+                }
+
+                // Update call status
+                call.status = 'connected';
+                this.calls.set(callId, call);
+
+                // Notify caller
+                const callerSocketId = this.userSocketMap.get(call.caller);
+                if (callerSocketId) {
+                    this.io.to(callerSocketId).emit('callAccepted', { callId });
+                }
+
+            } catch (error) {
+                socket.emit('callError', { error: error.message });
+            }
+        });
+
+        // Handle call rejection/end
+        socket.on('endCall', async (data) => {
+            try {
+                const { callId } = data;
+                const call = this.calls.get(callId);
+
+                if (!call) {
+                    throw new Error('Call not found');
+                }
+
+                // Clean up call data
+                this.calls.delete(callId);
+                this.userCallMap.delete(call.caller);
+                this.userCallMap.delete(call.receiver);
+
+                // Notify both parties
+                const callerSocketId = this.userSocketMap.get(call.caller);
+                const receiverSocketId = this.userSocketMap.get(call.receiver);
+
+                if (callerSocketId) {
+                    this.io.to(callerSocketId).emit('callEnded', { callId });
+                }
+                if (receiverSocketId) {
+                    this.io.to(receiverSocketId).emit('callEnded', { callId });
+                }
+
+            } catch (error) {
+                socket.emit('callError', { error: error.message });
+            }
+        });
+
+        // Handle WebRTC signaling
+        socket.on('signal', async (data) => {
+            try {
+                const { callId, signal } = data;
+                const call = this.calls.get(callId);
+
+                if (!call) {
+                    throw new Error('Call not found');
+                }
+
+                // Determine the recipient
+                const recipientId = call.caller === socket.user.id ? call.receiver : call.caller;
+                const recipientSocketId = this.userSocketMap.get(recipientId);
+
+                if (recipientSocketId) {
+                    this.io.to(recipientSocketId).emit('signal', {
+                        callId,
+                        signal,
+                        from: socket.user.id
                     });
                 }
 
-                const room = this.rooms.get(meeting.room_id);
-                room.peers.add(socket.id);
-
-                // Join socket.io room
-                socket.join(meeting.room_id);
-
-                // Get Router RTP Capabilities
-                const rtpCapabilities = room.router.rtpCapabilities;
-
-                callback({ rtpCapabilities });
-
-                // Notify others in the room
-                socket.to(meeting.room_id).emit('peerJoined', {
-                    peerId: socket.id,
-                    userId: socket.user.id
-                });
             } catch (error) {
-                callback({ error: error.message });
+                socket.emit('callError', { error: error.message });
             }
         });
-
-        socket.on('createWebRtcTransport', async (data, callback) => {
-            try {
-                const room = this.rooms.get(data.room_id);
-                if (!room) {
-                    throw new Error('Room not found');
-                }
-
-                const transport = await room.router.createWebRtcTransport({
-                    listenIps: [
-                        {
-                            ip: process.env.MEDIASOUP_LISTEN_IP || '127.0.0.1',
-                            announcedIp: process.env.MEDIASOUP_ANNOUNCED_IP
-                        }
-                    ],
-                    enableUdp: true,
-                    enableTcp: true,
-                    preferUdp: true,
-                });
-
-                this.peers.get(socket.id).transports.set(transport.id, transport);
-
-                callback({
-                    id: transport.id,
-                    iceParameters: transport.iceParameters,
-                    iceCandidates: transport.iceCandidates,
-                    dtlsParameters: transport.dtlsParameters,
-                });
-            } catch (error) {
-                callback({ error: error.message });
-            }
-        });
-
-        socket.on('connectWebRtcTransport', async (data, callback) => {
-            const { transportId, dtlsParameters } = data;
-            const transport = peer.transports.get(transportId);
-
-            if (!transport) {
-                return callback({ error: 'transport not found' });
-            }
-
-            try {
-                await transport.connect({ dtlsParameters });
-                callback({ connected: true });
-            } catch (error) {
-                callback({ error: error.message });
-            }
-        });
-
-        socket.on('produce', async (data, callback) => {
-            const { room_id, transportId, kind, rtpParameters } = data;
-            const transport = peer.transports.get(transportId);
-
-            if (!transport) {
-                return callback({ error: 'transport not found' });
-            }
-
-            try {
-                const producer = await transport.produce({
-                    kind,
-                    rtpParameters
-                });
-
-                peer.producers.set(producer.id, producer);
-
-                // Inform other peers in the room about new producer
-                socket.to(room_id).emit('newProducer', {
-                    producerId: producer.id,
-                    peerId: socket.id,
-                    kind
-                });
-
-                callback({ id: producer.id });
-            } catch (error) {
-                callback({ error: error.message });
-            }
-        });
-
-        socket.on('consume', async (data, callback) => {
-            const { room_id, transportId, producerId, rtpCapabilities } = data;
-            const room = this.rooms.get(room_id);
-            const transport = peer.transports.get(transportId);
-
-            if (!transport) {
-                return callback({ error: 'transport not found' });
-            }
-
-            try {
-                const consumer = await transport.consume({
-                    producerId,
-                    rtpCapabilities,
-                    paused: true // Begin paused, resume after callback
-                });
-
-                peer.consumers.set(consumer.id, consumer);
-
-                callback({
-                    id: consumer.id,
-                    producerId,
-                    kind: consumer.kind,
-                    rtpParameters: consumer.rtpParameters
-                });
-
-                await consumer.resume();
-            } catch (error) {
-                callback({ error: error.message });
-            }
-        });
-
-        socket.on('leaveRoom', async (data) => {
-            const { room_id } = data;
-            this.handlePeerLeave(socket.id, room_id);
-        });
-
-        socket.on('disconnect', () => {
-            // Clean up all rooms this peer was in
-            for (const room_id of peer.rooms) {
-                this.handlePeerLeave(socket.id, room_id);
-            }
-            this.peers.delete(socket.id);
-        });
+    
     }
 
-    async createRouter() {
-        const worker = this.workers[Math.floor(Math.random() * this.workers.length)];
-        const mediaCodecs = [
-            {
-                kind: 'audio',
-                mimeType: 'audio/opus',
-                clockRate: 48000,
-                channels: 2
-            },
-            {
-                kind: 'video',
-                mimeType: 'video/VP8',
-                clockRate: 90000,
-                parameters: {
-                    'x-google-start-bitrate': 1000
-                }
-            },
-            {
-                kind: 'video',
-                mimeType: 'video/H264',
-                clockRate: 90000,
-                parameters: {
-                    'packetization-mode': 1,
-                    'profile-level-id': '42e01f',
-                    'level-asymmetry-allowed': 1
-                }
-            }
-        ];
+    handlePeerLeave(socket, roomId) {
+        const room = this.rooms.get(roomId);
+        if (room) {
+            room.peers.delete(socket.id);
+            socket.leave(roomId);
 
-        return await worker.createRouter({ mediaCodecs });
+            socket.to(roomId).emit('peerLeft', {
+                peerId: socket.id,
+                userId: socket.user.id
+            });
+
+            if (room.peers.size === 0) {
+                this.rooms.delete(roomId);
+            }
+        }
     }
 
     handleDisconnect(socket) {
-        // Clean up user mapping
+        // Clean up other socket data
         this.userSocketMap.delete(socket.user.id);
-
-        // Clean up peer data
-        const peer = this.peers.get(socket.id);
-        if (peer) {
-            // Close all transports (which also closes producers and consumers)
-            for (const [, transport] of peer.transports) {
-                transport.close();
-            }
-            this.peers.delete(socket.id);
-        }
-
-        // Clean up rooms
-        for (const [roomId, room] of this.rooms) {
-            if (room.peers.has(socket.id)) {
-                room.peers.delete(socket.id);
-                
-                // Notify others in the room
-                socket.to(roomId).emit('peerLeft', {
-                    peerId: socket.id,
-                    userId: socket.user.id
-                });
-
-                // If room is empty, close and delete it
-                if (room.peers.size === 0) {
-                    room.router.close();
-                    this.rooms.delete(roomId);
-                }
-            }
-        }
     }
 }
 

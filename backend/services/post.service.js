@@ -81,7 +81,7 @@ const postService = {
             postId,
             { $set: updates },
             { new: true }
-        ).populate('resources');
+        ).populate('resources').populate('created_by', 'name email profile_image');
     },
 
     async deletePost(postId, userId) {
@@ -108,14 +108,18 @@ const postService = {
         if (!forum || !forum.members.includes(userId)) {
             throw new Error('Forum not found or access denied');
         }
-
+    
         return await Post.find({ 
             forum_id: forumId,
             is_deleted: false 
         })
-        .populate('created_by', 'name email')
-        .populate('resources')
-        .sort({ created_at: -1 });
+        .populate('created_by', 'name email profile_image')
+        .populate({
+            path: 'resources',
+            select: 'title file_url mime_type size'
+        })
+        .sort({ created_at: -1 })
+        .lean();
     }
 };
 

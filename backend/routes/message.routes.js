@@ -10,5 +10,6 @@ router.delete('/:messageId', MessageController.deleteMessage);
 router.put('/:messageId/read', MessageController.markAsRead);
 router.get('/unread', MessageController.getUnreadMessages);
 router.get('/chats', MessageController.getUserChats);
+router.get('/search', MessageController.searchChats);
 
 export default router;

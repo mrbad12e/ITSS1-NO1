@@ -1,0 +1,2 @@
+export const API_URL = import.meta.env.VITE_BACKEND_URL?.replace(/["']/g, '') || 'http://localhost:5000';
+export const AGORA_APP_ID = import.meta.env.VITE_AGORA_APP_ID?.replace(/["']/g, '') || process.env.VITE_AGORA_APP_ID;

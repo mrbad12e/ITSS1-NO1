@@ -9,13 +9,6 @@ const eventService = {
             throw new Error('Forum not found');
         }
 
-        // Check if user is forum owner or has permission to create events
-        if (forum.created_by.toString() !== userId && 
-            !forum.settings.can_members_create_events && 
-            forum.members.includes(userId)) {
-            throw new Error('Not authorized to create events in this forum');
-        }
-
         const event = new Event({
             ...eventData,
             organizer_id: userId,
